@@ -154,3 +154,20 @@ const graph = new ReferralGraph(new ConsoleLogger("info"));
 ### Acknowledgment of AI tools
 
 This project used Cursor and ChatGPT to accelerate development for non-critical tasks like drafting documentation, suggesting test scaffolds, and brainstorming algorithmic structures. All core logic, constraints, and final implementations were authored, reviewed, and validated by me.
+
+## Approach & Time Spent
+
+This repository contains the solution I implemented for a take‑home assignment from a company. Below is a concise overview of my approach and an estimate of time spent derived from the git history (timestamps in IST):
+
+- Approach
+
+  - **Part 1 (Referral Graph)**: Adjacency-list DAG with explicit constraints (no self-referrals, single referrer, acyclicity via DFS). Kept operations O(1)/O(V+E) where appropriate.
+  - **Part 2 (Reach & Top-k)**: BFS for total downstream reach with memoization. Ranking by precomputed reach; validated inputs; stable sort behavior with tests for ties.
+  - **Part 3 (Influencers)**:
+    - Unique Reach Expansion: Precompute reach sets via BFS, then greedy selection over uncovered set.
+    - Flow Centrality: All-pairs shortest paths via BFS; count intermediates v where dist(s,v)+dist(v,t)==dist(s,t).
+  - **Part 4 (Simulation)**: Deterministic expected-value model; capacity tracked per referrer; plateau at total capacity; `daysToTarget` with early unachievability checks.
+  - **Part 5 (Bonus Optimization)**: Exponential search to bound, then binary search over bonus with monotone `adoptionProb`; round up to nearest $10; precision via `eps`.
+  - **Testing & Docs**: High-coverage unit tests for graph constraints, metrics, simulation, and optimizer. README documents APIs, complexities, and metric tradeoffs.
+
+- Time Spent:  ~7–9 hours of focused work, spread across the day with breaks.
