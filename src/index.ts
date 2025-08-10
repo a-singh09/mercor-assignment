@@ -8,5 +8,5 @@ export * from "./types";
 // Export implementation classes
 export { ReferralGraph } from "./graph/ReferralGraph";
 export { NetworkAnalyzer } from "./analysis/NetworkAnalyzer";
-// export { NetworkSimulator } from './simulation/NetworkSimulator';
+export { NetworkSimulator } from "./simulation/NetworkSimulator";
 // export { BonusOptimizer } from './optimization/BonusOptimizer';
