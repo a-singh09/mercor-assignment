@@ -211,6 +211,198 @@ describe("NetworkAnalyzer", () => {
     });
   });
 
+  describe("calculateUniqueReachExpansion", () => {
+    it("should return empty array for empty graph", () => {
+      const result = analyzer.calculateUniqueReachExpansion();
+      expect(result).toHaveLength(0);
+    });
+
+    it("should return empty array for graph with no referrals", () => {
+      graph.addUser("user1");
+      graph.addUser("user2");
+
+      const result = analyzer.calculateUniqueReachExpansion();
+      expect(result).toHaveLength(0);
+    });
+
+    it("should handle simple linear chain correctly", () => {
+      // Create chain: A -> B -> C -> D
+      const users = ["A", "B", "C", "D"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("B", "C");
+      graph.addReferral("C", "D");
+
+      const result = analyzer.calculateUniqueReachExpansion();
+
+      // A should be selected first (reaches B, C, D = 3 unique)
+      // Then B should be selected (reaches C, D but C, D already covered = 0 unique)
+      // Algorithm should stop after A since no other user adds unique reach
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({ userId: "A", score: 3 });
+    });
+
+    it("should handle tree structure with optimal selection", () => {
+      // Create tree: A -> [B, C], B -> [D, E], C -> [F, G]
+      const users = ["A", "B", "C", "D", "E", "F", "G"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("A", "C");
+      graph.addReferral("B", "D");
+      graph.addReferral("B", "E");
+      graph.addReferral("C", "F");
+      graph.addReferral("C", "G");
+
+      const result = analyzer.calculateUniqueReachExpansion();
+
+      // A should be selected first (reaches all 6 others)
+      // No other user should add unique reach after A
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({ userId: "A", score: 6 });
+    });
+
+    it("should handle disconnected components correctly", () => {
+      // Create two separate trees: A -> [B, C] and D -> [E, F]
+      const users = ["A", "B", "C", "D", "E", "F"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("A", "C");
+      graph.addReferral("D", "E");
+      graph.addReferral("D", "F");
+
+      const result = analyzer.calculateUniqueReachExpansion();
+
+      // Should select both A and D (or D and A, order may vary for ties)
+      expect(result).toHaveLength(2);
+
+      // Both should have score of 2
+      expect(result[0].score).toBe(2);
+      expect(result[1].score).toBe(2);
+
+      // Should include both A and D
+      const userIds = result.map((r) => r.userId).sort();
+      expect(userIds).toEqual(["A", "D"]);
+    });
+
+    it("should handle complex overlapping reach correctly", () => {
+      // Create structure: A -> [B, C], B -> D, C -> E, D -> F
+      // This creates overlapping reach without violating unique referrer constraint
+      const users = ["A", "B", "C", "D", "E", "F"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("A", "C");
+      graph.addReferral("B", "D");
+      graph.addReferral("C", "E");
+      graph.addReferral("D", "F");
+
+      const result = analyzer.calculateUniqueReachExpansion();
+
+      // A should be selected first (reaches B, C, D, E, F = 5 unique)
+      // No other user should add unique reach after A
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({ userId: "A", score: 5 });
+    });
+
+    it("should handle star topology correctly", () => {
+      // Create star: center -> [leaf1, leaf2, leaf3, leaf4]
+      graph.addUser("center");
+      const leaves = ["leaf1", "leaf2", "leaf3", "leaf4"];
+
+      leaves.forEach((leaf) => {
+        graph.addUser(leaf);
+        graph.addReferral("center", leaf);
+      });
+
+      const result = analyzer.calculateUniqueReachExpansion();
+
+      // Only center should be selected (reaches all 4 leaves)
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({ userId: "center", score: 4 });
+    });
+
+    it("should handle case where multiple users have non-overlapping reach", () => {
+      // Create structure: A -> B, C -> D, E -> F (three separate chains)
+      const users = ["A", "B", "C", "D", "E", "F"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("C", "D");
+      graph.addReferral("E", "F");
+
+      const result = analyzer.calculateUniqueReachExpansion();
+
+      // All three users (A, C, E) should be selected with score 1 each
+      expect(result).toHaveLength(3);
+
+      result.forEach((rankedUser) => {
+        expect(rankedUser.score).toBe(1);
+      });
+
+      const userIds = result.map((r) => r.userId).sort();
+      expect(userIds).toEqual(["A", "C", "E"]);
+    });
+
+    it("should handle single user with referrals", () => {
+      graph.addUser("A");
+      graph.addUser("B");
+      graph.addReferral("A", "B");
+
+      const result = analyzer.calculateUniqueReachExpansion();
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({ userId: "A", score: 1 });
+    });
+
+    it("should use caching for reach sets", () => {
+      // Create simple structure
+      const users = ["A", "B", "C"];
+      users.forEach((user) => graph.addUser(user));
+      graph.addReferral("A", "B");
+      graph.addReferral("B", "C");
+
+      // First calculation should populate cache
+      const result1 = analyzer.calculateUniqueReachExpansion();
+
+      // Second calculation should use cache
+      const result2 = analyzer.calculateUniqueReachExpansion();
+
+      expect(result1).toEqual(result2);
+      expect(result1).toHaveLength(1);
+      expect(result1[0]).toEqual({ userId: "A", score: 2 });
+    });
+
+    it("should handle greedy selection with partial overlaps", () => {
+      // Create structure where greedy selection matters:
+      // A -> [B, C], B -> D, E -> [F, G], F -> H, I -> [J, K]
+      // This creates separate subtrees with different sizes
+      const users = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("A", "C");
+      graph.addReferral("B", "D");
+      graph.addReferral("E", "F");
+      graph.addReferral("E", "G");
+      graph.addReferral("F", "H");
+      graph.addReferral("I", "J");
+      graph.addReferral("I", "K");
+
+      const result = analyzer.calculateUniqueReachExpansion();
+
+      // A should be selected first (unique reach: B, C, D = 3)
+      // Then E should be selected (unique reach: F, G, H = 3)
+      // Then I should be selected (unique reach: J, K = 2)
+      expect(result).toHaveLength(3);
+      expect(result[0]).toEqual({ userId: "A", score: 3 });
+      expect(result[1]).toEqual({ userId: "E", score: 3 });
+      expect(result[2]).toEqual({ userId: "I", score: 2 });
+    });
+  });
+
   describe("edge cases", () => {
     it("should handle very deep chain", () => {
       // Create chain of 100 users

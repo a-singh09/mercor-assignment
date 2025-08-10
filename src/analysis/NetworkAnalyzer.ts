@@ -102,8 +102,124 @@ export class NetworkAnalyzer implements INetworkAnalyzer {
    * @returns Array of users ranked by their unique reach contribution
    */
   calculateUniqueReachExpansion(): RankedUser[] {
-    // This will be implemented in task 5
-    throw new Error("Unique reach expansion not yet implemented");
+    // Pre-compute downstream reach sets for all users
+    const reachSets = this.precomputeReachSets();
+
+    const allUsers = this.graph.getAllUsers();
+    const coveredCandidates = new Set<string>();
+    const rankedInfluencers: RankedUser[] = [];
+    const remainingUsers = new Set(allUsers);
+
+    // Greedy algorithm: iteratively select user with maximum unique reach
+    while (remainingUsers.size > 0) {
+      let bestUser: string | null = null;
+      let bestUniqueReach = 0;
+      let bestNewCandidates: Set<string> = new Set();
+
+      // Find user with maximum unique reach expansion
+      for (const userId of remainingUsers) {
+        const userReachSet = reachSets.get(userId) || new Set();
+
+        // Calculate unique candidates this user would add
+        const newCandidates = new Set<string>();
+        for (const candidate of userReachSet) {
+          if (!coveredCandidates.has(candidate)) {
+            newCandidates.add(candidate);
+          }
+        }
+
+        const uniqueReach = newCandidates.size;
+
+        if (uniqueReach > bestUniqueReach) {
+          bestUser = userId;
+          bestUniqueReach = uniqueReach;
+          bestNewCandidates = newCandidates;
+        }
+      }
+
+      // If no user adds unique reach, we're done
+      if (bestUser === null || bestUniqueReach === 0) {
+        break;
+      }
+
+      // Add best user to results and update covered candidates
+      rankedInfluencers.push({
+        userId: bestUser,
+        score: bestUniqueReach,
+      });
+
+      // Update covered candidates with new ones from best user
+      for (const candidate of bestNewCandidates) {
+        coveredCandidates.add(candidate);
+      }
+
+      // Remove selected user from remaining users
+      remainingUsers.delete(bestUser);
+    }
+
+    return rankedInfluencers;
+  }
+
+  /**
+   * Pre-compute downstream reach sets for all users using BFS
+   * @returns Map of userId to Set of all users reachable from that user
+   */
+  private precomputeReachSets(): Map<string, Set<string>> {
+    // Check if already cached
+    if (this.cache.reachSetsCache.size > 0) {
+      return this.cache.reachSetsCache;
+    }
+
+    const allUsers = this.graph.getAllUsers();
+
+    for (const userId of allUsers) {
+      if (!this.cache.reachSetsCache.has(userId)) {
+        const reachSet = this.computeDownstreamReachSet(userId);
+        this.cache.reachSetsCache.set(userId, reachSet);
+      }
+    }
+
+    return this.cache.reachSetsCache;
+  }
+
+  /**
+   * Compute downstream reach set for a specific user using BFS
+   * @param userId - ID of the user
+   * @returns Set of all user IDs reachable from the given user
+   */
+  private computeDownstreamReachSet(userId: string): Set<string> {
+    if (!this.graph.hasUser(userId)) {
+      return new Set();
+    }
+
+    const reachSet = new Set<string>();
+    const visited = new Set<string>();
+    const queue = [userId];
+
+    while (queue.length > 0) {
+      const currentUserId = queue.shift()!;
+
+      if (visited.has(currentUserId)) {
+        continue;
+      }
+
+      visited.add(currentUserId);
+
+      // Don't include the starting user in their own reach set
+      if (currentUserId !== userId) {
+        reachSet.add(currentUserId);
+      }
+
+      // Add all direct referrals to the queue
+      const directReferrals = this.graph.getDirectReferrals(currentUserId);
+      for (const referralId of directReferrals) {
+        if (!visited.has(referralId)) {
+          queue.push(referralId);
+        }
+      }
+    }
+
+    return reachSet;
   }
 
   /**
