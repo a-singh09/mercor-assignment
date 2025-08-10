@@ -227,8 +227,165 @@ export class NetworkAnalyzer implements INetworkAnalyzer {
    * @returns Array of users ranked by their flow centrality score
    */
   calculateFlowCentrality(): RankedUser[] {
-    // This will be implemented in task 6
-    throw new Error("Flow centrality not yet implemented");
+    const allUsers = this.graph.getAllUsers();
+
+    // Pre-compute all-pairs shortest paths
+    const shortestPaths = this.computeAllPairsShortestPaths();
+
+    // Calculate betweenness centrality for each user
+    const centralityScores = new Map<string, number>();
+
+    // Initialize centrality scores
+    for (const userId of allUsers) {
+      centralityScores.set(userId, 0);
+    }
+
+    // For each pair of users (s, t), count how many shortest paths pass through each intermediate user
+    for (const sourceUser of allUsers) {
+      for (const targetUser of allUsers) {
+        if (sourceUser === targetUser) continue;
+
+        const sourceDistances = shortestPaths.get(sourceUser);
+        const targetDistances = shortestPaths.get(targetUser);
+
+        if (!sourceDistances || !targetDistances) continue;
+
+        const shortestDistance = sourceDistances.get(targetUser);
+        if (shortestDistance === undefined || shortestDistance === Infinity)
+          continue;
+
+        // Check each potential intermediate user
+        for (const intermediateUser of allUsers) {
+          if (
+            intermediateUser === sourceUser ||
+            intermediateUser === targetUser
+          )
+            continue;
+
+          const distSourceToIntermediate =
+            sourceDistances.get(intermediateUser);
+
+          // Get distance from intermediate to target by looking up intermediate's distances
+          const intermediateDistances = shortestPaths.get(intermediateUser);
+          const distIntermediateToTarget =
+            intermediateDistances?.get(targetUser);
+
+          if (
+            distSourceToIntermediate === undefined ||
+            distIntermediateToTarget === undefined
+          )
+            continue;
+          if (
+            distSourceToIntermediate === Infinity ||
+            distIntermediateToTarget === Infinity
+          )
+            continue;
+
+          // Check if intermediate user lies on shortest path: dist(s,v) + dist(v,t) == dist(s,t)
+          if (
+            distSourceToIntermediate + distIntermediateToTarget ===
+            shortestDistance
+          ) {
+            const currentScore = centralityScores.get(intermediateUser) || 0;
+            centralityScores.set(intermediateUser, currentScore + 1);
+          }
+        }
+      }
+    }
+
+    // Convert to ranked users array
+    const rankedUsers: RankedUser[] = [];
+    for (const [userId, score] of centralityScores) {
+      // Only include users with non-zero centrality scores
+      if (score > 0) {
+        rankedUsers.push({
+          userId,
+          score,
+        });
+      }
+    }
+
+    // Sort by centrality score in descending order
+    rankedUsers.sort((a, b) => b.score - a.score);
+
+    return rankedUsers;
+  }
+
+  /**
+   * Compute all-pairs shortest paths using BFS from each node
+   * @returns Map where each key is a source user and value is a Map of target users to distances
+   */
+  private computeAllPairsShortestPaths(): Map<string, Map<string, number>> {
+    // Check if already cached
+    if (this.cache.shortestPathCache.size > 0) {
+      return this.cache.shortestPathCache;
+    }
+
+    const allUsers = this.graph.getAllUsers();
+
+    // Compute shortest paths from each user using BFS
+    for (const sourceUser of allUsers) {
+      if (!this.cache.shortestPathCache.has(sourceUser)) {
+        const distances = this.computeShortestPathsFromSource(sourceUser);
+        this.cache.shortestPathCache.set(sourceUser, distances);
+      }
+    }
+
+    return this.cache.shortestPathCache;
+  }
+
+  /**
+   * Compute shortest paths from a single source using BFS
+   * @param sourceUserId - The source user ID
+   * @returns Map of target user IDs to their shortest distances from source
+   */
+  private computeShortestPathsFromSource(
+    sourceUserId: string,
+  ): Map<string, number> {
+    const distances = new Map<string, number>();
+    const visited = new Set<string>();
+    const queue: Array<{ userId: string; distance: number }> = [];
+
+    // Initialize with source user
+    queue.push({ userId: sourceUserId, distance: 0 });
+    distances.set(sourceUserId, 0);
+
+    while (queue.length > 0) {
+      const { userId, distance } = queue.shift()!;
+
+      if (visited.has(userId)) {
+        continue;
+      }
+
+      visited.add(userId);
+
+      // Explore all direct referrals (outgoing edges)
+      const directReferrals = this.graph.getDirectReferrals(userId);
+      for (const referralId of directReferrals) {
+        if (!visited.has(referralId)) {
+          const newDistance = distance + 1;
+
+          // Only update if we found a shorter path or haven't visited this node yet
+          if (
+            !distances.has(referralId) ||
+            newDistance < distances.get(referralId)!
+          ) {
+            distances.set(referralId, newDistance);
+            queue.push({ userId: referralId, distance: newDistance });
+          }
+        }
+      }
+    }
+
+    // Set infinite distance for unreachable users
+    const allUsers = this.graph.getAllUsers();
+    for (const userId of allUsers) {
+      if (!distances.has(userId)) {
+        distances.set(userId, Infinity);
+      }
+    }
+
+    return distances;
   }
 
   /**

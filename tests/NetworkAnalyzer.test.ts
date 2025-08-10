@@ -403,6 +403,252 @@ describe("NetworkAnalyzer", () => {
     });
   });
 
+  describe("calculateFlowCentrality", () => {
+    it("should return empty array for empty graph", () => {
+      const result = analyzer.calculateFlowCentrality();
+      expect(result).toHaveLength(0);
+    });
+
+    it("should return empty array for graph with no referrals", () => {
+      graph.addUser("user1");
+      graph.addUser("user2");
+
+      const result = analyzer.calculateFlowCentrality();
+      expect(result).toHaveLength(0);
+    });
+
+    it("should handle simple linear chain correctly", () => {
+      // Create chain: A -> B -> C -> D
+      // B should have highest centrality (lies on path A->C, A->D)
+      // C should have lower centrality (lies on path A->D)
+      const users = ["A", "B", "C", "D"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("B", "C");
+      graph.addReferral("C", "D");
+
+      const result = analyzer.calculateFlowCentrality();
+
+      // B lies on paths: A->C, A->D (2 paths)
+      // C lies on paths: A->D, B->D (2 paths)
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({ userId: "B", score: 2 });
+      expect(result[1]).toEqual({ userId: "C", score: 2 });
+    });
+
+    it("should handle star topology correctly", () => {
+      // Create star: center -> [leaf1, leaf2, leaf3]
+      // Center should have centrality 0 (no paths pass through it)
+      // Leaves should have centrality 0 (no paths pass through them)
+      graph.addUser("center");
+      const leaves = ["leaf1", "leaf2", "leaf3"];
+
+      leaves.forEach((leaf) => {
+        graph.addUser(leaf);
+        graph.addReferral("center", leaf);
+      });
+
+      const result = analyzer.calculateFlowCentrality();
+
+      // In a star topology, no user lies on shortest paths between other users
+      expect(result).toHaveLength(0);
+    });
+
+    it("should handle branching topology correctly", () => {
+      // Create branching: A -> B -> [C, D]
+      // B should have centrality (lies on paths A->C, A->D)
+      const users = ["A", "B", "C", "D"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("B", "C");
+      graph.addReferral("B", "D");
+
+      const result = analyzer.calculateFlowCentrality();
+
+      // B lies on paths A->C and A->D
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({ userId: "B", score: 2 });
+    });
+
+    it("should handle bridge topology correctly", () => {
+      // Create: A -> B -> C -> D -> E
+      // C should have highest centrality (bridge between left and right)
+      const users = ["A", "B", "C", "D", "E"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("B", "C");
+      graph.addReferral("C", "D");
+      graph.addReferral("D", "E");
+
+      const result = analyzer.calculateFlowCentrality();
+
+      // C lies on paths: A->D, A->E, B->D, B->E (4 paths)
+      // B lies on paths: A->C, A->D, A->E (3 paths)
+      // D lies on paths: A->E, B->E, C->E (3 paths)
+      expect(result).toHaveLength(3);
+
+      // C should have highest centrality (4), B and D should have 3 each
+      const scores = result.map((r) => r.score).sort((a, b) => b - a);
+      expect(scores[0]).toBe(4); // C
+      expect(scores[1]).toBe(3); // B or D
+      expect(scores[2]).toBe(3); // D or B
+    });
+
+    it("should handle complex network topology", () => {
+      // Create more complex network:
+      // A -> B -> D -> F
+      // A -> C -> E -> G
+      // This creates two separate subtrees
+      const users = ["A", "B", "C", "D", "E", "F", "G"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("A", "C");
+      graph.addReferral("B", "D");
+      graph.addReferral("C", "E");
+      graph.addReferral("D", "F");
+      graph.addReferral("E", "G");
+
+      const result = analyzer.calculateFlowCentrality();
+
+      // B lies on paths: A->D, A->F (2 paths)
+      // C lies on paths: A->E, A->G (2 paths)
+      // D lies on paths: A->F (1 path)
+      // E lies on paths: A->G (1 path)
+      expect(result).toHaveLength(4);
+
+      const userIds = result.map((r) => r.userId).sort();
+      expect(userIds).toEqual(["B", "C", "D", "E"]);
+    });
+
+    it("should handle disconnected components", () => {
+      // Create two separate chains: A -> B -> C and D -> E -> F
+      const users = ["A", "B", "C", "D", "E", "F"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("B", "C");
+      graph.addReferral("D", "E");
+      graph.addReferral("E", "F");
+
+      const result = analyzer.calculateFlowCentrality();
+
+      // B lies on path A->C, E lies on path D->F
+      expect(result).toHaveLength(2);
+
+      // Both should have score 1
+      expect(result[0].score).toBe(1);
+      expect(result[1].score).toBe(1);
+
+      const userIds = result.map((r) => r.userId).sort();
+      expect(userIds).toEqual(["B", "E"]);
+    });
+
+    it("should handle single edge correctly", () => {
+      graph.addUser("A");
+      graph.addUser("B");
+      graph.addReferral("A", "B");
+
+      const result = analyzer.calculateFlowCentrality();
+
+      // No intermediate nodes in a single edge
+      expect(result).toHaveLength(0);
+    });
+
+    it("should use caching for shortest paths", () => {
+      // Create simple structure
+      const users = ["A", "B", "C"];
+      users.forEach((user) => graph.addUser(user));
+      graph.addReferral("A", "B");
+      graph.addReferral("B", "C");
+
+      // First calculation should populate cache
+      const result1 = analyzer.calculateFlowCentrality();
+
+      // Second calculation should use cache
+      const result2 = analyzer.calculateFlowCentrality();
+
+      expect(result1).toEqual(result2);
+      expect(result1).toHaveLength(1);
+      expect(result1[0]).toEqual({ userId: "B", score: 1 });
+    });
+
+    it("should handle tree with multiple branches", () => {
+      // Create tree: A -> [B, C], B -> [D, E], C -> [F, G]
+      const users = ["A", "B", "C", "D", "E", "F", "G"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("A", "C");
+      graph.addReferral("B", "D");
+      graph.addReferral("B", "E");
+      graph.addReferral("C", "F");
+      graph.addReferral("C", "G");
+
+      const result = analyzer.calculateFlowCentrality();
+
+      // B lies on paths: A->D, A->E (2 paths)
+      // C lies on paths: A->F, A->G (2 paths)
+      expect(result).toHaveLength(2);
+
+      // Both B and C should have score 2
+      expect(result[0].score).toBe(2);
+      expect(result[1].score).toBe(2);
+
+      const userIds = result.map((r) => r.userId).sort();
+      expect(userIds).toEqual(["B", "C"]);
+    });
+
+    it("should correctly identify shortest path condition", () => {
+      // Create network where shortest path condition is critical:
+      // A -> B -> C
+      // A -> D -> E -> F (separate longer path)
+      const users = ["A", "B", "C", "D", "E", "F"];
+      users.forEach((user) => graph.addUser(user));
+
+      graph.addReferral("A", "B");
+      graph.addReferral("B", "C");
+      graph.addReferral("A", "D");
+      graph.addReferral("D", "E");
+      graph.addReferral("E", "F");
+
+      const result = analyzer.calculateFlowCentrality();
+
+      // B lies on path A->C (1 path)
+      // D lies on paths A->E, A->F (2 paths)
+      // E lies on path A->F (1 path)
+      expect(result).toHaveLength(3);
+
+      const userIds = result.map((r) => r.userId).sort();
+      expect(userIds).toEqual(["B", "D", "E"]);
+    });
+
+    it("should handle large linear chain efficiently", () => {
+      // Create chain of 10 users to test performance
+      const chainLength = 10;
+      for (let i = 0; i < chainLength; i++) {
+        graph.addUser(`user${i}`);
+      }
+
+      for (let i = 0; i < chainLength - 1; i++) {
+        graph.addReferral(`user${i}`, `user${i + 1}`);
+      }
+
+      const result = analyzer.calculateFlowCentrality();
+
+      // All intermediate users should have centrality
+      expect(result).toHaveLength(chainLength - 2);
+
+      // Verify scores are in descending order
+      for (let i = 0; i < result.length - 1; i++) {
+        expect(result[i].score).toBeGreaterThanOrEqual(result[i + 1].score);
+      }
+    });
+  });
+
   describe("edge cases", () => {
     it("should handle very deep chain", () => {
       // Create chain of 100 users
