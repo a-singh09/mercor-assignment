@@ -156,6 +156,202 @@ describe("ReferralGraph", () => {
         ReferralError.DUPLICATE_REFERRER,
       );
     });
+
+    describe("comprehensive cycle scenarios", () => {
+      it("should detect cycles in star topology", () => {
+        // Create star: center -> leaf1, center -> leaf2, center -> leaf3
+        graph = new ReferralGraph();
+        const users = ["center", "leaf1", "leaf2", "leaf3"];
+        users.forEach((user) => graph.addUser(user));
+
+        graph.addReferral("center", "leaf1");
+        graph.addReferral("center", "leaf2");
+        graph.addReferral("center", "leaf3");
+
+        // Any leaf trying to refer center should create a cycle
+        expect(() => graph.addReferral("leaf1", "center")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+        expect(() => graph.addReferral("leaf2", "center")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+        expect(() => graph.addReferral("leaf3", "center")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+      });
+
+      it("should detect cycles in deep chain", () => {
+        // Create deep chain: A -> B -> C -> D -> E -> F
+        graph = new ReferralGraph();
+        const users = ["A", "B", "C", "D", "E", "F"];
+        users.forEach((user) => graph.addUser(user));
+
+        graph.addReferral("A", "B");
+        graph.addReferral("B", "C");
+        graph.addReferral("C", "D");
+        graph.addReferral("D", "E");
+        graph.addReferral("E", "F");
+
+        // Any node trying to refer an ancestor should create a cycle
+        expect(() => graph.addReferral("F", "A")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+
+        // Test additional cycle scenarios
+        graph.addUser("G");
+
+        // F -> G -> A would create a cycle (A has no referrer initially)
+        graph.addReferral("F", "G");
+        expect(() => graph.addReferral("G", "A")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+      });
+
+      it("should detect cycles in tree with multiple branches", () => {
+        // Create tree structure:
+        //       root
+        //      /    \
+        //   left    right
+        //   /  \      |
+        // ll   lr    rc
+        graph = new ReferralGraph();
+        const users = ["root", "left", "right", "ll", "lr", "rc"];
+        users.forEach((user) => graph.addUser(user));
+
+        graph.addReferral("root", "left");
+        graph.addReferral("root", "right");
+        graph.addReferral("left", "ll");
+        graph.addReferral("left", "lr");
+        graph.addReferral("right", "rc");
+
+        // Any descendant trying to refer root should create a cycle
+        expect(() => graph.addReferral("ll", "root")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+        expect(() => graph.addReferral("lr", "root")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+        expect(() => graph.addReferral("rc", "root")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+
+        // Cross-branch cycles should also be detected
+        // Add new users to test cross-branch cycles without duplicate referrer issues
+        graph.addUser("newLeft");
+        graph.addUser("newRight");
+
+        // Test cross-branch cycle: ll -> newLeft -> root would create cycle
+        graph.addReferral("ll", "newLeft");
+        expect(() => graph.addReferral("newLeft", "root")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+      });
+
+      it("should handle disconnected components correctly", () => {
+        // Create two separate components: A -> B -> C and X -> Y -> Z
+        graph = new ReferralGraph();
+        const users = ["A", "B", "C", "X", "Y", "Z"];
+        users.forEach((user) => graph.addUser(user));
+
+        // First component
+        graph.addReferral("A", "B");
+        graph.addReferral("B", "C");
+
+        // Second component
+        graph.addReferral("X", "Y");
+        graph.addReferral("Y", "Z");
+
+        // Cross-component referrals should be allowed (no cycles)
+        graph.addUser("newNode");
+        expect(() => graph.addReferral("C", "newNode")).not.toThrow();
+
+        // But cycles within components should still be detected
+        // Add a new user to test cycle within second component
+        graph.addUser("W");
+        graph.addReferral("Z", "W");
+        expect(() => graph.addReferral("W", "X")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+      });
+
+      it("should handle single node self-referral attempt", () => {
+        graph = new ReferralGraph();
+        graph.addUser("solo");
+
+        // Self-referral should be caught by self-referral check, not cycle detection
+        expect(() => graph.addReferral("solo", "solo")).toThrow(
+          ReferralError.SELF_REFERRAL,
+        );
+      });
+
+      it("should handle empty graph edge cases", () => {
+        graph = new ReferralGraph();
+
+        // Attempting to validate acyclicity with non-existent users
+        expect(graph.validateAcyclicity("nonexistent1", "nonexistent2")).toBe(
+          false,
+        );
+      });
+
+      it("should detect complex indirect cycles", () => {
+        // Create a complex structure that could form a cycle through multiple paths
+        graph = new ReferralGraph();
+        const users = ["A", "B", "C", "D", "E", "F", "G"];
+        users.forEach((user) => graph.addUser(user));
+
+        // Create structure: A -> B -> C -> D
+        //                   A -> E -> F -> G
+        graph.addReferral("A", "B");
+        graph.addReferral("B", "C");
+        graph.addReferral("C", "D");
+        graph.addReferral("A", "E");
+        graph.addReferral("E", "F");
+        graph.addReferral("F", "G");
+
+        // Now if G tries to refer A, it would create a cycle through the E->F->G path
+        expect(() => graph.addReferral("G", "A")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+
+        // Similarly, D trying to refer A would create a cycle through B->C->D path
+        expect(() => graph.addReferral("D", "A")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+
+        // But cross-branch connections that don't create cycles should work
+        graph.addUser("H");
+        expect(() => graph.addReferral("D", "H")).not.toThrow();
+        expect(() => graph.addReferral("G", "H")).toThrow(
+          ReferralError.DUPLICATE_REFERRER,
+        ); // H already has D as referrer
+      });
+
+      it("should handle large chain cycle detection efficiently", () => {
+        // Test performance with a larger chain
+        graph = new ReferralGraph();
+        const chainLength = 100;
+        const users = Array.from({ length: chainLength }, (_, i) => `user${i}`);
+
+        users.forEach((user) => graph.addUser(user));
+
+        // Create chain: user0 -> user1 -> user2 -> ... -> user99
+        for (let i = 0; i < chainLength - 1; i++) {
+          graph.addReferral(`user${i}`, `user${i + 1}`);
+        }
+
+        // Last user trying to refer first should create cycle
+        expect(() =>
+          graph.addReferral(`user${chainLength - 1}`, "user0"),
+        ).toThrow(ReferralError.CYCLE_DETECTED);
+
+        // Add a new user and have a middle user refer it, then test cycle with root
+        graph.addUser("newUser");
+        graph.addReferral("user50", "newUser");
+        expect(() => graph.addReferral("newUser", "user0")).toThrow(
+          ReferralError.CYCLE_DETECTED,
+        );
+      });
+    });
   });
 
   describe("validateAcyclicity", () => {
