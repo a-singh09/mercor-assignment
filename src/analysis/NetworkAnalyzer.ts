@@ -1,6 +1,8 @@
 import { INetworkAnalyzer, NetworkCache } from "../types/analysis";
 import { IReferralGraph } from "../types/graph";
 import { RankedUser } from "../types/user";
+import { ConsoleLogger, Logger } from "../utils/Logger";
+import { ReferralError, ReferralNetworkError } from "../types/errors";
 
 /**
  * Implementation of network analysis functionality
@@ -8,16 +10,20 @@ import { RankedUser } from "../types/user";
 export class NetworkAnalyzer implements INetworkAnalyzer {
   private graph: IReferralGraph;
   private cache: NetworkCache;
+  private logger: Logger;
 
-  constructor(graph: IReferralGraph) {
+  constructor(graph: IReferralGraph, logger?: Logger) {
     this.graph = graph;
     this.cache = new NetworkCacheImpl();
+    this.logger = logger ?? new ConsoleLogger("none");
   }
 
   /**
    * Calculate the total reach (direct + indirect referrals) for a user using BFS
    * @param userId - ID of the user
    * @returns Total number of users in the referral subtree
+   * Time complexity: O(V + E) BFS over nodes reachable from userId. Cached per user.
+   * Space complexity: O(V) for visited/queue.
    */
   calculateTotalReach(userId: string): number {
     // Check cache first
@@ -60,6 +66,7 @@ export class NetworkAnalyzer implements INetworkAnalyzer {
 
     // Cache the result
     this.cache.totalReachCache.set(userId, totalReach);
+    this.logger.debug("calculateTotalReach computed", { userId, totalReach });
     return totalReach;
   }
 
@@ -67,11 +74,17 @@ export class NetworkAnalyzer implements INetworkAnalyzer {
    * Get top referrers ranked by their total reach
    * @param k - Number of top referrers to return
    * @returns Array of ranked users sorted by total reach (descending)
+   * Time complexity: O(V*(V+E)) to compute all reaches in worst-case + O(V log V) sort.
+   * Space complexity: O(V).
    */
   getTopReferrersByReach(k: number): RankedUser[] {
     // Validate k parameter
     if (k <= 0 || !Number.isInteger(k)) {
-      throw new Error("k must be a positive integer");
+      this.logger.warn("Invalid parameter for getTopReferrersByReach", { k });
+      throw new ReferralNetworkError(
+        ReferralError.INVALID_PARAMETER,
+        "Invalid parameter value: k must be a positive integer",
+      );
     }
 
     const allUsers = this.graph.getAllUsers();
@@ -94,12 +107,19 @@ export class NetworkAnalyzer implements INetworkAnalyzer {
     rankedUsers.sort((a, b) => b.score - a.score);
 
     // Return top k results
-    return rankedUsers.slice(0, k);
+    const result = rankedUsers.slice(0, k);
+    this.logger.debug("getTopReferrersByReach computed", {
+      k,
+      count: result.length,
+    });
+    return result;
   }
 
   /**
    * Calculate unique reach expansion using greedy algorithm
    * @returns Array of users ranked by their unique reach contribution
+   * Time complexity: Precompute reach sets O(V*(V+E)); greedy selection up to O(V^2) set ops.
+   * Space complexity: O(V^2) for reach sets in dense DAGs.
    */
   calculateUniqueReachExpansion(): RankedUser[] {
     // Pre-compute downstream reach sets for all users
@@ -157,6 +177,9 @@ export class NetworkAnalyzer implements INetworkAnalyzer {
       remainingUsers.delete(bestUser);
     }
 
+    this.logger.debug("calculateUniqueReachExpansion computed", {
+      count: rankedInfluencers.length,
+    });
     return rankedInfluencers;
   }
 
@@ -225,6 +248,8 @@ export class NetworkAnalyzer implements INetworkAnalyzer {
   /**
    * Calculate flow centrality (betweenness centrality) for all users
    * @returns Array of users ranked by their flow centrality score
+   * Time complexity: Using precomputed shortest paths, ~O(V^3) to count path pass-throughs.
+   * Space complexity: O(V^2) for distances plus O(V) for scores.
    */
   calculateFlowCentrality(): RankedUser[] {
     const allUsers = this.graph.getAllUsers();
@@ -308,12 +333,17 @@ export class NetworkAnalyzer implements INetworkAnalyzer {
     // Sort by centrality score in descending order
     rankedUsers.sort((a, b) => b.score - a.score);
 
+    this.logger.debug("calculateFlowCentrality computed", {
+      count: rankedUsers.length,
+    });
     return rankedUsers;
   }
 
   /**
    * Compute all-pairs shortest paths using BFS from each node
    * @returns Map where each key is a source user and value is a Map of target users to distances
+   * Time complexity: O(V*(V+E)) for BFS from every node.
+   * Space complexity: O(V^2) for distances in dense graphs.
    */
   private computeAllPairsShortestPaths(): Map<string, Map<string, number>> {
     // Check if already cached
@@ -338,6 +368,8 @@ export class NetworkAnalyzer implements INetworkAnalyzer {
    * Compute shortest paths from a single source using BFS
    * @param sourceUserId - The source user ID
    * @returns Map of target user IDs to their shortest distances from source
+   * Time complexity: O(V + E) from source.
+   * Space complexity: O(V).
    */
   private computeShortestPathsFromSource(
     sourceUserId: string,

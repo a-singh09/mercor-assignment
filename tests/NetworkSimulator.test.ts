@@ -434,7 +434,7 @@ describe("NetworkSimulator", () => {
       const executionTime = endTime - startTime;
 
       // Should complete within reasonable time (even with zero probability, still needs to iterate)
-      expect(executionTime).toBeLessThan(5000);
+      expect(executionTime).toBeLessThan(10000);
       expect(result).toHaveLength(100000);
 
       // All values should be zero

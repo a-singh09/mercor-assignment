@@ -1,19 +1,26 @@
 import { AdoptionProbFunction, IBonusOptimizer } from "../types/simulation";
 import { NetworkSimulator } from "../simulation/NetworkSimulator";
+import { ConsoleLogger, Logger } from "../utils/Logger";
+import { ReferralError, ReferralNetworkError } from "../types/errors";
 
 /**
  * Optimizes the minimum bonus required to hit a target within a time budget.
  */
 export class BonusOptimizer implements IBonusOptimizer {
   private simulator: NetworkSimulator;
+  private logger: Logger;
 
-  constructor(simulator?: NetworkSimulator) {
+  constructor(simulator?: NetworkSimulator, logger?: Logger) {
     this.simulator = simulator ?? new NetworkSimulator();
+    this.logger = logger ?? new ConsoleLogger("none");
   }
 
   /**
    * Find minimum bonus amount to achieve target hires within specified days.
    * Uses binary search over bonus, assuming adoptionProb is monotonic non-decreasing.
+   * Time complexity: O((E + B) * T), where E ≤ 32 expansions, B ≤ 1024 binary steps,
+   * and T is the cost of a single daysToTarget() call.
+   * Space complexity: O(1) beyond simulator state per call.
    */
   minBonusForTarget(
     days: number,
@@ -23,13 +30,30 @@ export class BonusOptimizer implements IBonusOptimizer {
   ): number | null {
     // Validate inputs
     if (!Number.isFinite(days) || days <= 0) {
-      throw new Error("Days must be a positive number");
+      this.logger.warn("Invalid days in minBonusForTarget", { days });
+      throw new ReferralNetworkError(
+        ReferralError.INVALID_PARAMETER,
+        "Days must be a positive number",
+      );
     }
     if (!Number.isFinite(targetHires) || targetHires <= 0) {
-      throw new Error("Target hires must be a positive number");
+      this.logger.warn("Invalid targetHires in minBonusForTarget", {
+        targetHires,
+      });
+      throw new ReferralNetworkError(ReferralError.INVALID_PARAMETER);
     }
     if (!Number.isFinite(eps) || eps <= 0) {
-      throw new Error("eps must be a positive number");
+      this.logger.warn("Invalid eps in minBonusForTarget", { eps });
+      throw new ReferralNetworkError(
+        ReferralError.INVALID_PARAMETER,
+        "eps must be a positive number",
+      );
+    }
+    if (typeof adoptionProb !== "function") {
+      this.logger.warn(
+        "Invalid adoptionProb in minBonusForTarget: not a function",
+      );
+      throw new ReferralNetworkError(ReferralError.INVALID_PARAMETER);
     }
 
     // Quick unachievable checks using simulator constraints
@@ -38,12 +62,20 @@ export class BonusOptimizer implements IBonusOptimizer {
       NetworkSimulator.getInitialReferrersCount() *
       NetworkSimulator.getReferralCapacity();
     if (targetHires > MAX_POSSIBLE) {
+      this.logger.info(
+        "Target exceeds max possible referrals; returning null",
+        { targetHires, MAX_POSSIBLE },
+      );
       return null;
     }
 
     // If even with probability 1 the target can't be reached within the given days, return null
     const minDaysAtMaxProb = this.simulator.daysToTarget(1.0, targetHires);
     if (minDaysAtMaxProb === -1 || minDaysAtMaxProb > days) {
+      this.logger.info(
+        "Target unachievable within given days at p=1; returning null",
+        { days, targetHires, minDaysAtMaxProb },
+      );
       return null;
     }
 
@@ -73,6 +105,10 @@ export class BonusOptimizer implements IBonusOptimizer {
       // then there is no feasible finite bonus (should have been caught by the 1.0 check; this is a safety guard)
       if (pHigh >= 0.999999) {
         // Despite saturation, days still too high -> impossible
+        this.logger.info(
+          "Adoption probability saturated near 1 without feasibility; returning null",
+          { high, pHigh, dHigh },
+        );
         return null;
       }
 
@@ -83,6 +119,10 @@ export class BonusOptimizer implements IBonusOptimizer {
 
     if (expansions >= MAX_EXPANSIONS) {
       // Could not find a satisfying upper bound within reasonable range
+      this.logger.info(
+        "Exceeded max expansions without feasible upper bound; returning null",
+        { high },
+      );
       return null;
     }
 
@@ -116,6 +156,10 @@ export class BonusOptimizer implements IBonusOptimizer {
       const pFallback = this.clamp01(adoptionProb(fallback));
       const dFallback = this.simulator.daysToTarget(pFallback, targetHires);
       if (dFallback === -1 || dFallback > days) {
+        this.logger.info(
+          "Rounded and fallback bonuses not feasible; returning null",
+          { rounded, fallback },
+        );
         return null;
       }
       return fallback;

@@ -1,4 +1,6 @@
 import { INetworkSimulator, SimulationState } from "../types/simulation";
+import { ConsoleLogger, Logger } from "../utils/Logger";
+import { ReferralError, ReferralNetworkError } from "../types/errors";
 
 /**
  * Network growth simulator that models referral network expansion over time
@@ -6,6 +8,11 @@ import { INetworkSimulator, SimulationState } from "../types/simulation";
 export class NetworkSimulator implements INetworkSimulator {
   private static readonly INITIAL_REFERRERS = 100;
   private static readonly REFERRAL_CAPACITY = 10;
+  private logger: Logger;
+
+  constructor(logger?: Logger) {
+    this.logger = logger ?? new ConsoleLogger("none");
+  }
 
   /**
    * Initialize simulation state with 100 active referrers, each with capacity of 10
@@ -41,17 +48,28 @@ export class NetworkSimulator implements INetworkSimulator {
 
   /**
    * Simulate network growth over specified number of days
+   * Expected-value model (deterministic), not stochastic Monte Carlo.
    * @param probability Daily probability of successful referral per active referrer
    * @param days Number of days to simulate
    * @returns Array where element i represents cumulative expected referrals at end of day i
+   * Time complexity: O(D * R_d), where D is days and R_d is active referrers per day (≤ 100 here).
+   * Space complexity: O(D) for the returned time series.
    */
   simulate(probability: number, days: number): number[] {
     if (days <= 0) {
-      throw new Error("Days must be positive");
+      this.logger.warn("Invalid parameter for simulate", { days });
+      throw new ReferralNetworkError(
+        ReferralError.INVALID_PARAMETER,
+        "Days must be positive",
+      );
     }
 
     if (probability < 0 || probability > 1) {
-      throw new Error("Probability must be between 0 and 1");
+      this.logger.warn("Invalid probability for simulate", { probability });
+      throw new ReferralNetworkError(
+        ReferralError.INVALID_PROBABILITY,
+        "Probability must be between 0 and 1",
+      );
     }
 
     const results: number[] = [];
@@ -84,6 +102,8 @@ export class NetworkSimulator implements INetworkSimulator {
    * @param state Current simulation state
    * @param probability Daily probability of successful referral per active referrer
    * @returns Updated simulation state with expected capacity reductions
+   * Time complexity: O(R) over active referrers in current day (≤ 100).
+   * Space complexity: O(R).
    */
   private simulateExpectedState(
     state: SimulationState,
@@ -120,10 +140,16 @@ export class NetworkSimulator implements INetworkSimulator {
    * @param probability Daily probability of successful referral per active referrer
    * @param target Target number of referrals to achieve
    * @returns Minimum number of days to reach target, or -1 if unachievable
+   * Time complexity: proportional to simulated days until target or exhaustion (≤ 10 at p=1).
+   * Space complexity: O(R) per day.
    */
   daysToTarget(probability: number, target: number): number {
     if (probability < 0 || probability > 1) {
-      throw new Error("Probability must be between 0 and 1");
+      this.logger.warn("Invalid probability for daysToTarget", { probability });
+      throw new ReferralNetworkError(
+        ReferralError.INVALID_PROBABILITY,
+        "Probability must be between 0 and 1",
+      );
     }
 
     if (target <= 0) {

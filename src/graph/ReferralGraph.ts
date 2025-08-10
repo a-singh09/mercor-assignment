@@ -1,6 +1,7 @@
 import { IReferralGraph } from "../types/graph";
 import { User } from "../types/user";
 import { ReferralError, ReferralNetworkError } from "../types/errors";
+import { ConsoleLogger, Logger } from "../utils/Logger";
 
 /**
  * Implementation of the referral graph using adjacency lists
@@ -9,11 +10,13 @@ export class ReferralGraph implements IReferralGraph {
   private users: Map<string, User>;
   private adjacencyList: Map<string, Set<string>>; // userId -> set of direct referrals
   private reverseAdjacencyList: Map<string, Set<string>>; // userId -> set of users who referred them
+  private logger: Logger;
 
-  constructor() {
+  constructor(logger?: Logger) {
     this.users = new Map();
     this.adjacencyList = new Map();
     this.reverseAdjacencyList = new Map();
+    this.logger = logger ?? new ConsoleLogger("none");
   }
 
   /**
@@ -44,6 +47,7 @@ export class ReferralGraph implements IReferralGraph {
     this.adjacencyList.set(userId, new Set<string>());
     this.reverseAdjacencyList.set(userId, new Set<string>());
 
+    this.logger.debug("User added", { userId });
     return true;
   }
 
@@ -90,6 +94,7 @@ export class ReferralGraph implements IReferralGraph {
     this.adjacencyList.get(referrerId)!.add(candidateId);
     this.reverseAdjacencyList.get(candidateId)!.add(referrerId);
 
+    this.logger.debug("Referral added", { referrerId, candidateId });
     return true;
   }
 
@@ -130,6 +135,8 @@ export class ReferralGraph implements IReferralGraph {
   /**
    * Validate that adding a referral would not create a cycle
    * Uses DFS to detect if candidateId can reach referrerId
+   * Time complexity: O(V + E) in the subgraph reachable from candidateId.
+   * Space complexity: O(V) due to visited set and traversal stack.
    */
   validateAcyclicity(referrerId: string, candidateId: string): boolean {
     // If either user doesn't exist, we can't validate properly
