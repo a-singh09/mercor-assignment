@@ -9,4 +9,4 @@ export * from "./types";
 export { ReferralGraph } from "./graph/ReferralGraph";
 export { NetworkAnalyzer } from "./analysis/NetworkAnalyzer";
 export { NetworkSimulator } from "./simulation/NetworkSimulator";
-// export { BonusOptimizer } from './optimization/BonusOptimizer';
+export { BonusOptimizer } from "./optimization/BonusOptimizer";
