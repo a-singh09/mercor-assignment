@@ -86,8 +86,10 @@ export class BonusOptimizer implements IBonusOptimizer {
       return null;
     }
 
-    // Binary search within [low, high]
-    while (high - low > eps) {
+    // Binary search within [low, high] with iteration cap for convergence safety
+    const MAX_BINARY_ITERS = 1024;
+    let iter = 0;
+    while (high - low > eps && iter < MAX_BINARY_ITERS) {
       const mid = (low + high) / 2;
       const pMid = this.clamp01(adoptionProb(mid));
       const dMid = this.simulator.daysToTarget(pMid, targetHires);
@@ -97,6 +99,8 @@ export class BonusOptimizer implements IBonusOptimizer {
       } else {
         low = mid; // infeasible, need larger bonus
       }
+
+      iter++;
     }
 
     // Round up to nearest $10 as per requirements
